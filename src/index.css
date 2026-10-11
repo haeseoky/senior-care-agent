@@ -1,0 +1,179 @@
+/* 효돌이 AI 어르신 전용 프리미엄 태블릿 & 모바일 겸용 디자인 시스템 */
+:root {
+  --font-family: 'Noto Sans KR', 'Outfit', -apple-system, sans-serif;
+  
+  /* 색상 토큰 - 어르신 시안성 최적화 고대비 앤 따뜻한 컬러 */
+  --bg-dark: #0f172a;
+  --bg-card: rgba(30, 41, 59, 0.85);
+  --bg-card-hover: rgba(51, 65, 85, 0.9);
+  
+  --primary: #6366f1;
+  --primary-glow: rgba(99, 102, 241, 0.4);
+  --accent-amber: #f59e0b;
+  --accent-emerald: #10b981;
+  --accent-rose: #f43f5e;
+  
+  --text-main: #f8fafc;
+  --text-sub: #cbd5e1;
+  --text-muted: #94a3b8;
+  
+  --border-light: rgba(255, 255, 255, 0.14);
+  --border-active: rgba(99, 102, 241, 0.6);
+  
+  --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 35px rgba(99, 102, 241, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-dark);
+  font-family: var(--font-family);
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at 50% 20%, #1e1b4b 0%, #0f172a 70%, #020617 100%);
+  position: relative;
+}
+
+/* 어르신 전용 초대형 커스텀 스크롤바 */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--primary);
+  border-radius: 8px;
+}
+
+/* 버튼 기본 스타일 - 터치 영역 최소 54px */
+button {
+  font-family: inherit;
+  font-size: 1.15rem;
+  font-weight: 700;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  border-radius: 20px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 20px;
+}
+
+button:active {
+  transform: scale(0.96);
+}
+
+/* Glassmorphism 카드 */
+.glass-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-light);
+  border-radius: 24px;
+  box-shadow: var(--shadow-lg);
+}
+
+/* 아바타 호흡 애니메이션 */
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(99, 102, 241, 0.7), 0 0 80px rgba(99, 102, 241, 0.4);
+    transform: scale(1.03);
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2);
+    transform: scale(1);
+  }
+}
+
+@keyframes voiceWave {
+  0%, 100% { height: 14px; }
+  50% { height: 40px; }
+}
+
+.avatar-breathing {
+  animation: pulseGlow 3.5s infinite ease-in-out;
+}
+
+/* 모바일 세로모드 반응형 스타일 */
+@media (max-width: 900px) {
+  html, body {
+    font-size: 16px;
+    overflow-y: auto;
+  }
+
+  #root {
+    min-height: 100vh;
+    height: auto;
+    overflow-y: auto;
+  }
+
+  .mobile-hide {
+    display: none !important;
+  }
+
+  .app-container {
+    padding: 12px !important;
+    gap: 12px !important;
+    height: auto !important;
+    min-height: 100vh;
+  }
+
+  .header-card {
+    padding: 12px 16px !important;
+    min-height: auto !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+  }
+
+  .main-grid {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    overflow: visible !important;
+    gap: 14px !important;
+  }
+
+  .avatar-card {
+    min-height: 420px !important;
+    padding: 20px !important;
+  }
+
+  .avatar-circle {
+    width: 150px !important;
+    height: 150px !important;
+  }
+  
+  .avatar-emoji {
+    font-size: 64px !important;
+  }
+
+  button {
+    min-height: 52px;
+    font-size: 1.05rem;
+    padding: 0 16px;
+  }
+}
