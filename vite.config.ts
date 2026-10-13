@@ -12,7 +12,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['apple-touch-icon.png'],
       manifest: {
         name: '효돌이 AI - 노인돌봄 에이전트',
         short_name: '효돌이AI',
@@ -20,7 +20,7 @@ export default defineConfig({
         theme_color: '#4f46e5',
         background_color: '#0f172a',
         display: 'standalone',
-        orientation: 'landscape',
+        orientation: 'any',
         icons: [
           {
             src: 'pwa-192x192.png',

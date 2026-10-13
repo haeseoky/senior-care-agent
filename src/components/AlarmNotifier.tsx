@@ -1,16 +1,18 @@
-import { useState, useEffect } from 'react';
-import { Volume2, CheckCircle } from 'lucide-react';
-import type { MedicationItem } from './CareScheduler';
+import { useState, useEffect, useRef } from 'react';
+import { Volume2, CheckCircle, Clock } from 'lucide-react';
+import { medsStore, type MedicationItem } from '../lib/medsStore';
 
+/** 정시 복약 알림 - 스토어 구독 + 미응답 시 5분 간격 재알림 (최대 3회) */
 export default function AlarmNotifier() {
   const [activeAlarm, setActiveAlarm] = useState<MedicationItem | null>(null);
+  const retryCountRef = useRef(0);
 
-  // 1. Web Screen Wake Lock (24시간 화면 상시 켜짐 대기 방지 보장)
+  // 1. Web Screen Wake Lock - 화면 꺼짐/탭 전환 후 자동 재획득
   useEffect(() => {
     let wakeLock: any = null;
     const requestWakeLock = async () => {
       try {
-        if ('wakeLock' in navigator) {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
           wakeLock = await (navigator as any).wakeLock.request('screen');
         }
       } catch (err) {
@@ -18,35 +20,59 @@ export default function AlarmNotifier() {
       }
     };
     requestWakeLock();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && (!wakeLock || wakeLock.released)) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
       if (wakeLock) wakeLock.release();
     };
   }, []);
 
-  // 2. 1초 간격 정시 복약 감지 타이머
+  // 2. 정시 복약 감지 (1분 간격 체크)
   useEffect(() => {
+    const firedKey = (id: string) => `alarm_fired_${id}_${new Date().toDateString()}`;
+    const fired = new Set<string>(
+      Object.keys(localStorage).filter(k => k.startsWith('alarm_fired_'))
+    );
+    // 하루가 지난 fired 키 정리
+    const today = new Date().toDateString();
+    Object.keys(localStorage).forEach(k => {
+      if (k.startsWith('alarm_fired_') && !k.endsWith(today)) localStorage.removeItem(k);
+    });
+
     const checkAlarm = () => {
+      if (activeAlarm) return; // 이미 알림 표시 중
       const now = new Date();
-      const currentHours = now.getHours().toString().padStart(2, '0');
-      const currentMinutes = now.getMinutes().toString().padStart(2, '0');
-      const timeString = `${currentHours}:${currentMinutes}`;
-
-      const savedMedsStr = localStorage.getItem('senior_care_meds');
-      if (!savedMedsStr) return;
-
-      const meds: MedicationItem[] = JSON.parse(savedMedsStr);
-      // 아직 복약하지 않은 약 중 시/분이 일치하는 항목 검색
-      const targetMed = meds.find(m => !m.taken && m.time.includes(timeString));
-
-      if (targetMed && (!activeAlarm || activeAlarm.id !== targetMed.id)) {
-        setActiveAlarm(targetMed);
-        triggerVoiceAlarm(targetMed.name);
+      const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const target = medsStore.get().find(m => !m.taken && m.time === timeString && !fired.has(firedKey(m.id)));
+      if (target) {
+        fired.add(firedKey(target.id));
+        retryCountRef.current = 0;
+        setActiveAlarm(target);
+        triggerVoiceAlarm(target.name);
       }
     };
 
-    const interval = setInterval(checkAlarm, 5000);
+    const interval = setInterval(checkAlarm, 15000);
+    checkAlarm();
     return () => clearInterval(interval);
   }, [activeAlarm]);
+
+  // 3. 미응답 재알림 - 5분 후 TTS 재생 (최대 3회)
+  useEffect(() => {
+    if (!activeAlarm) return;
+    const timer = setTimeout(() => {
+      if (retryCountRef.current < 3) {
+        retryCountRef.current += 1;
+        triggerVoiceAlarm(activeAlarm.name);
+      }
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [activeAlarm, retryCountRef.current]);
 
   const triggerVoiceAlarm = (medName: string) => {
     if ('speechSynthesis' in window) {
@@ -62,15 +88,7 @@ export default function AlarmNotifier() {
 
   const handleDismissAndConfirm = () => {
     if (!activeAlarm) return;
-    
-    // 복약 상태 완료로 업데이트
-    const savedMedsStr = localStorage.getItem('senior_care_meds');
-    if (savedMedsStr) {
-      const meds: MedicationItem[] = JSON.parse(savedMedsStr);
-      const updated = meds.map(m => m.id === activeAlarm.id ? { ...m, taken: true } : m);
-      localStorage.setItem('senior_care_meds', JSON.stringify(updated));
-    }
-
+    medsStore.setTaken(activeAlarm.id, true);
     setActiveAlarm(null);
 
     if ('speechSynthesis' in window) {
@@ -81,12 +99,18 @@ export default function AlarmNotifier() {
     }
   };
 
+  /** 나중에 드시겠습니다 - 완료 처리는 하지 않고 알림만 닫기 (재알림 유지) */
+  const handleSnooze = () => {
+    setActiveAlarm(null);
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  };
+
   if (!activeAlarm) return null;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(2, 6, 23, 0.92)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
       <div className="glass-card" style={{ maxWidth: '580px', width: '100%', padding: '40px', background: 'rgba(245, 158, 11, 0.2)', border: '4px solid #f59e0b', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        
+
         <div style={{ fontSize: '76px', animation: 'voiceWave 1.2s infinite' }}>💊</div>
 
         <div>
@@ -100,11 +124,18 @@ export default function AlarmNotifier() {
           <Volume2 size={28} /> "어르신, 약 드실 시간입니다!"
         </div>
 
-        <button 
+        <button
           onClick={handleDismissAndConfirm}
           style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: '#ffffff', fontSize: '1.5rem', fontWeight: 900, height: '76px', borderRadius: '38px', boxShadow: '0 12px 30px rgba(16, 185, 129, 0.4)' }}
         >
           <CheckCircle size={36} /> 약 복용했습니다 (완료)
+        </button>
+
+        <button
+          onClick={handleSnooze}
+          style={{ background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: '1.1rem', height: '58px', borderRadius: '29px' }}
+        >
+          <Clock size={24} /> 조금 뒤에 드실게요
         </button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { HeartPulse, Activity } from 'lucide-react';
+import { safeGet, safeSet } from '../lib/storage';
 
 export interface HealthLog {
   date: string;
@@ -9,13 +10,10 @@ export interface HealthLog {
 
 export default function HealthCheck() {
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
-  const [history, setHistory] = useState<HealthLog[]>(() => {
-    const saved = localStorage.getItem('senior_care_health');
-    return saved ? JSON.parse(saved) : [
+  const [history, setHistory] = useState<HealthLog[]>(() => safeGet<HealthLog[]>('senior_care_health', [
       { date: '어제', mood: '😀', label: '최고예요' },
       { date: '그저께', mood: '🙂', label: '보통이에요' }
-    ];
-  });
+  ]));
 
   const moods = [
     { emoji: '😀', label: '최고예요', msg: '어르신, 오늘도 활기차고 좋은 날이 될 것입니다!', color: '#10b981' },
@@ -33,7 +31,7 @@ export default function HealthCheck() {
     };
     const updated = [newEntry, ...history.slice(0, 4)];
     setHistory(updated);
-    localStorage.setItem('senior_care_health', JSON.stringify(updated));
+    safeSet('senior_care_health', updated);
 
     // 음성 안내 발화
     if ('speechSynthesis' in window) {
