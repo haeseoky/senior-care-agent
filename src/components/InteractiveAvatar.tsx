@@ -45,6 +45,7 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
   // LLM 설정 (기기 내 저장)
   const [provider, setProvider] = useState<LLMProvider>(() => loadLLMSettings().provider);
   const [apiKey, setApiKey] = useState<string>(() => loadLLMSettings().apiKey);
+  const [glmProxyUrl, setGlmProxyUrl] = useState<string>(() => loadLLMSettings().glmProxyUrl || '');
   const [showModelModal, setShowModelModal] = useState<boolean>(false);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -377,8 +378,13 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
         return { emoji: '🤔', label: 'AI 대화 생각 중...', bg: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', color: '#f59e0b' };
       case 'speaking':
         return { emoji: '👵🏻', label: '효돌이가 이야기 중...', bg: 'linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)', color: '#ec4899' };
-      default:
-        return { emoji: '👵🏻', label: `상시 대기 중 (${apiKey ? PROVIDER_LABEL[provider] : '기본 AI'})`, bg: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', color: '#6366f1' };
+      default: {
+        const usingProxy = provider === 'glm' && (glmProxyUrl || loadLLMSettings().glmProxyUrl);
+        const modelLabel = provider === 'glm' && !usingProxy
+          ? 'GLM (프록시 미설정!)'
+          : (apiKey || usingProxy ? PROVIDER_LABEL[provider] : '기본 AI');
+        return { emoji: '👵🏻', label: `상시 대기 중 (${modelLabel})`, bg: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)', color: '#6366f1' };
+      }
     }
   };
 
@@ -654,11 +660,29 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
               </span>
             </div>
 
+            {provider === 'glm' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(245, 158, 11, 0.08)', padding: '16px', borderRadius: '16px', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                <label style={{ fontSize: '0.95rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  GLM 프록시 URL (선택):
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://senior-care-glm-proxy.계정.workers.dev"
+                  value={glmProxyUrl}
+                  onChange={e => setGlmProxyUrl(e.target.value.trim())}
+                  style={{ padding: '12px 16px', borderRadius: '12px', fontSize: '1rem', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
+                />
+                <span style={{ fontSize: '0.75rem', color: '#fcd34d', lineHeight: 1.5 }}>
+                  * z.ai는 브라우저 직접 호출(CORS)을 허용하지 않습니다. GLM 사용 시 저장소의 worker/glm-proxy.ts를 Cloudflare Workers에 배포하고 그 주소를 입력하세요. 키는 프록시에만 저장되며, 프록시 사용 시 위 API Key는 비워도 됩니다. Gemini/OpenAI는 프록시 없이 직접 호출 가능합니다.
+                </span>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
                 onClick={async () => {
                   setLlmTestResult(null);
-                  const s = { provider, apiKey };
+                  const s = { provider, apiKey, glmProxyUrl: glmProxyUrl || undefined };
                   try {
                     const r = await processUtterance(s, '안녕하세요', '테스트');
                     setLlmTestResult(r.intent && r.reply !== undefined
@@ -674,7 +698,7 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
               </button>
               <button
                 onClick={() => {
-                  saveLLMSettings({ provider, apiKey });
+                  saveLLMSettings({ provider, apiKey, glmProxyUrl: glmProxyUrl || undefined });
                   setLlmError(null);
                   setShowModelModal(false);
                 }}

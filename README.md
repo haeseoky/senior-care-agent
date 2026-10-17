@@ -90,6 +90,23 @@ src/
 
 ---
 
+## GLM 프록시 (Cloudflare Worker) 배포 — GLM 사용 시 필수
+
+z.ai API는 브라우저 CORS를 허용하지 않아 PWA에서 GLM을 직접 호출할 수 없습니다. 저장소의 `worker/glm-proxy.ts`를 배포해 중계합니다. Gemini/OpenAI는 프록시 없이 직접 호출 가능합니다.
+
+```bash
+cd worker
+npx wrangler login          # 최초 1회 브라우저 인증
+npx wrangler secret put ZAI_API_KEY   # z.ai API 키 붙여넣기 (서버에만 저장)
+npx wrangler deploy
+# 출력된 https://senior-care-glm-proxy.<계정>.workers.dev 주소를
+# 앱 설정(⚙️) → 'GLM 프록시 URL'에 입력
+```
+
+- API 키는 Worker 시크릿에만 저장되며 클라이언트로 전송되지 않습니다 (이 경우 앱의 API Key 입력은 비워도 됩니다).
+- Worker는 coding/standard 양쪽 z.ai 엔드포인트를 자동 폴백합니다.
+- 허용 오리진은 `worker/glm-proxy.ts`의 `ALLOWED_ORIGINS`에서 관리합니다.
+
 ## 백로그 및 향후 과제
 
 프로젝트의 상세 개선 이력과 향후 로드맵(P0~P3 우선순위 백로그)은 [BACKLOG.md](BACKLOG.md)를 참조하세요.

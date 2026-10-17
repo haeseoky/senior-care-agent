@@ -8,6 +8,8 @@ export type LLMProvider = 'glm' | 'gemini-flash' | 'openai-gpt4o';
 export interface LLMSettings {
   provider: LLMProvider;
   apiKey: string;
+  /** GLM 전용 프록시 URL (Cloudflare Worker 등). z.ai는 브라우저 CORS 차단으로 직접 호출 불가 */
+  glmProxyUrl?: string;
 }
 
 const SETTINGS_KEY = 'senior_care_llm_settings_v2';
@@ -45,8 +47,12 @@ async function callChat(settings: LLMSettings, system: string, user: string): Pr
   if (!apiKey) throw new Error('NO_API_KEY');
 
   if (provider === 'glm') {
+    // z.ai는 브라우저 CORS 차단 → 프록시 URL이 있으면 프록시 경유, 없으면 직접 시도(개발 환경용)
+    const urls: string[] = settings.glmProxyUrl
+      ? [settings.glmProxyUrl]
+      : [...GLM_ENDPOINTS];
     let lastErr: unknown = null;
-    for (const url of GLM_ENDPOINTS) {
+    for (const url of urls) {
       let res: Response;
       try {
         res = await fetch(url, {
