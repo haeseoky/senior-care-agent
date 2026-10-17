@@ -12,6 +12,15 @@ export interface LLMSettings {
 
 const SETTINGS_KEY = 'senior_care_llm_settings_v2';
 
+/** GLM 엔드포인트 후보 — Coding Plan 키는 coding 엔드포인트만, 표준 API 키는 paas 엔드포인트만 허용되므로 401/403 시 순차 폴백 */
+const GLM_ENDPOINTS = [
+  'https://api.z.ai/api/coding/paas/v4/chat/completions',
+  'https://api.z.ai/api/paas/v4/chat/completions',
+] as const;
+
+/** GLM 기본 모델 — glm-4-flash는 은퇴. glm-5.2는 단편 응답에 적합 */
+export const GLM_DEFAULT_MODEL = 'glm-5.2';
+
 export function loadLLMSettings(): LLMSettings {
   const s = safeGet<Partial<LLMSettings>>(SETTINGS_KEY, {});
   // 구버전 키 마이그레이션
@@ -36,18 +45,32 @@ async function callChat(settings: LLMSettings, system: string, user: string): Pr
   if (!apiKey) throw new Error('NO_API_KEY');
 
   if (provider === 'glm') {
-    const res = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'glm-4-flash',
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        temperature: 0.6,
-      }),
-    });
-    if (!res.ok) throw new Error(`GLM API ${res.status}`);
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content ?? '';
+    let lastErr: unknown = null;
+    for (const url of GLM_ENDPOINTS) {
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: GLM_DEFAULT_MODEL,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+            temperature: 0.6,
+          }),
+        });
+      } catch (e) {
+        lastErr = e; // 네트워크 오류 → 다음 엔드포인트 시도
+        continue;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        return data.choices?.[0]?.message?.content ?? '';
+      }
+      lastErr = new Error(`GLM API ${res.status} (${url.includes('/coding/') ? 'coding' : 'standard'} 엔드포인트)`);
+      // 인증/권한 오류(401/403)는 다음 엔드포인트로 폴백, 그 외(모델 오류 등)는 재시도 무의미
+      if (res.status !== 401 && res.status !== 403) break;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('GLM API 모든 엔드포인트 실패');
   }
 
   if (provider === 'openai-gpt4o') {

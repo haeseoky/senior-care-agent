@@ -27,6 +27,8 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
   const [isListening, setIsListening] = useState(false);
   const [avatarState, setAvatarState] = useState<'idle' | 'listening' | 'thinking' | 'speaking' | 'offline'>('idle');
   const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [transcript, setTranscript] = useState<string>('');
   const [responseMsg, setResponseMsg] = useState<string>('어르신, 반갑습니다! 말씀하고 싶으시면 마이크를 누르거나 말씀해 주세요.');
   const [textInput, setTextInput] = useState<string>('');
@@ -300,8 +302,10 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       try {
         result = await processUtterance(settings, text, seniorName);
         usedLLM = true;
+        setLlmError(null); // 성공 시 오류 상태 해제
       } catch (e) {
         console.warn('LLM 호출 실패, 로컬 폴백 사용:', e);
+        setLlmError(e instanceof Error ? e.message : 'LLM 호출 실패');
         result = localFallback(text, seniorName);
       }
     } else {
@@ -386,6 +390,12 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       {isOffline && (
         <div style={{ width: '100%', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#fca5a5', padding: '8px 14px', borderRadius: '14px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
           ⚠️ 현재 오프라인 상태입니다. 음성 인식 자동 재시작이 일시 중지되었습니다.
+        </div>
+      )}
+
+      {llmError && (
+        <div style={{ width: '100%', background: 'rgba(245, 158, 11, 0.15)', border: '1px solid #f59e0b', color: '#fcd34d', padding: '8px 14px', borderRadius: '14px', fontSize: '0.82rem', fontWeight: 600, marginBottom: '8px', textAlign: 'left' }}>
+          ⚠️ AI 연결 실패 ({llmError}) — 기본 응답으로 대체 중입니다. 설정에서 키를 확인해 주세요.
         </div>
       )}
 
@@ -644,15 +654,40 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
               </span>
             </div>
 
-            <button
-              onClick={() => {
-                saveLLMSettings({ provider, apiKey });
-                setShowModelModal(false);
-              }}
-              style={{ background: 'var(--primary)', color: '#fff', minHeight: '52px', fontSize: '1.1rem' }}
-            >
-              설정 저장
-            </button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={async () => {
+                  setLlmTestResult(null);
+                  const s = { provider, apiKey };
+                  try {
+                    const r = await processUtterance(s, '안녕하세요', '테스트');
+                    setLlmTestResult(r.intent && r.reply !== undefined
+                      ? { ok: true, message: `연결 성공 (모델 응답: "${(r.reply || 'OK').slice(0, 40)}")` }
+                      : { ok: false, message: '응답 형식 이상' });
+                  } catch (e) {
+                    setLlmTestResult({ ok: false, message: e instanceof Error ? e.message : '실패' });
+                  }
+                }}
+                style={{ flex: 1, background: 'rgba(255,255,255,0.1)', color: '#fff', minHeight: '52px' }}
+              >
+                연결 테스트
+              </button>
+              <button
+                onClick={() => {
+                  saveLLMSettings({ provider, apiKey });
+                  setLlmError(null);
+                  setShowModelModal(false);
+                }}
+                style={{ flex: 1, background: 'var(--primary)', color: '#fff', minHeight: '52px', fontSize: '1.1rem' }}
+              >
+                설정 저장
+              </button>
+            </div>
+            {llmTestResult && (
+              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: llmTestResult.ok ? '#34d399' : '#f87171', textAlign: 'center' }}>
+                {llmTestResult.ok ? '✓ ' : '✗ '}{llmTestResult.message}
+              </div>
+            )}
           </div>
         </div>
       )}
