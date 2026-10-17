@@ -3,6 +3,7 @@ import { Mic, MicOff, Volume2, Bot, Settings, Sparkles, X, Key, History, Trash2,
 import { medsStore } from '../lib/medsStore';
 import { safeGet, safeSet } from '../lib/storage';
 import { loadLLMSettings, saveLLMSettings, processUtterance, localFallback, type LLMProvider, type IntentResult } from '../lib/llm';
+import { getSpeechRecognition, type SpeechRecognitionLike, type SpeechRecognitionEvent } from '../lib/webSpeech';
 
 interface InteractiveAvatarProps {
   onTriggerSOS?: () => void;
@@ -24,12 +25,14 @@ const PROVIDER_LABEL: Record<LLMProvider, string> = {
 
 export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarProps) {
   const [isListening, setIsListening] = useState(false);
-  const [avatarState, setAvatarState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [avatarState, setAvatarState] = useState<'idle' | 'listening' | 'thinking' | 'speaking' | 'offline'>('idle');
+  const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? !navigator.onLine : false);
   const [transcript, setTranscript] = useState<string>('');
   const [responseMsg, setResponseMsg] = useState<string>('어르신, 반갑습니다! 말씀하고 싶으시면 마이크를 누르거나 말씀해 주세요.');
   const [textInput, setTextInput] = useState<string>('');
 
   const [activeSpeakerRole, setActiveSpeakerRole] = useState<'senior' | 'family'>('senior');
+  const [manualSpeaker, setManualSpeaker] = useState<'auto' | 'senior' | 'family'>('auto');
   const [seniorName, setSeniorName] = useState<string>(() => safeGet<string>('senior_care_name', '홍길동'));
 
   const [chatLogs, setChatLogs] = useState<ChatMessage[]>(() => safeGet<ChatMessage[]>('senior_care_chat_history_v2', [
@@ -42,10 +45,17 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
   const [apiKey, setApiKey] = useState<string>(() => loadLLMSettings().apiKey);
   const [showModelModal, setShowModelModal] = useState<boolean>(false);
 
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const finalTextRef = useRef<string>('');
   const isSpeakingRef = useRef<boolean>(false);
-  const silenceTimerRef = useRef<any>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backoffDelayRef = useRef<number>(1500);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manualSpeakerRef = useRef<'auto' | 'senior' | 'family'>('auto');
+
+  useEffect(() => {
+    manualSpeakerRef.current = manualSpeaker;
+  }, [manualSpeaker]);
 
   useEffect(() => {
     safeSet('senior_care_name', seniorName);
@@ -62,10 +72,9 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
 
   // ── STT (Web Speech API, 브라우저 미지원 시 텍스트 입력으로 안내) ──
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    const recognition = getSpeechRecognition();
+    if (!recognition) return;
 
-    const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'ko-KR';
@@ -76,7 +85,9 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       finalTextRef.current = '';
     };
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      backoffDelayRef.current = 1500;
+      setIsOffline(false);
       if (isSpeakingRef.current) return;
       let currentText = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -94,7 +105,7 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       }
     };
 
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionEvent) => {
       if (event.error !== 'no-speech' && event.error !== 'aborted') {
         console.log('Speech recognition error:', event.error);
       }
@@ -103,24 +114,80 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
     recognition.onend = () => {
       setIsListening(false);
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+
+      if (!navigator.onLine) {
+        setIsOffline(true);
+        setAvatarState('offline');
+        return;
+      }
+
+      setIsOffline(false);
+      const capturedText = finalTextRef.current;
+      const hadValidResult = Boolean(capturedText && capturedText.trim());
+
       if (!isSpeakingRef.current) {
-        const capturedText = finalTextRef.current;
-        if (capturedText && capturedText.trim()) {
+        if (hadValidResult) {
           handleUserUtterance(capturedText);
           finalTextRef.current = '';
         } else {
           setAvatarState('idle');
         }
       }
-      setTimeout(() => {
+
+      const currentDelay = hadValidResult ? 1500 : backoffDelayRef.current;
+      if (!hadValidResult) {
+        backoffDelayRef.current = Math.min(backoffDelayRef.current * 2, 30000);
+      } else {
+        backoffDelayRef.current = 1500;
+      }
+
+      restartTimerRef.current = setTimeout(() => {
+        if (!navigator.onLine) {
+          setIsOffline(true);
+          setAvatarState('offline');
+          return;
+        }
         if (!isSpeakingRef.current && recognitionRef.current) {
           try { recognitionRef.current.start(); } catch (e) {}
         }
-      }, 1500);
+      }, currentDelay);
     };
 
+    const handleOffline = () => {
+      setIsOffline(true);
+      setAvatarState('offline');
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    };
+
+    const handleOnline = () => {
+      setIsOffline(false);
+      backoffDelayRef.current = 1500;
+      if (!isSpeakingRef.current) {
+        setAvatarState('idle');
+        if (recognitionRef.current) {
+          try { recognitionRef.current.start(); } catch (e) {}
+        }
+      }
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
     recognitionRef.current = recognition;
-    try { recognition.start(); } catch (e) {}
+    if (navigator.onLine) {
+      try { recognition.start(); } catch (e) {}
+    } else {
+      setIsOffline(true);
+      setAvatarState('offline');
+    }
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
   }, []);
 
   const saveChatLog = useCallback((sender: 'senior' | 'family' | 'agent', text: string) => {
@@ -146,10 +213,10 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
     utterance.pitch = 1.0;
     utterance.onstart = () => setAvatarState('speaking');
     const resume = () => {
-      setAvatarState('idle');
+      setAvatarState(navigator.onLine ? 'idle' : 'offline');
       setTimeout(() => {
         isSpeakingRef.current = false;
-        if (recognitionRef.current) {
+        if (navigator.onLine && recognitionRef.current) {
           try { recognitionRef.current.start(); } catch (e) {}
         }
       }, 1000);
@@ -241,21 +308,31 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       result = localFallback(text, seniorName);
     }
 
-    setActiveSpeakerRole(result.intent.speaker);
-    saveChatLog(result.intent.speaker, text.trim());
+    const currentManualSpeaker = manualSpeaker !== 'auto' ? manualSpeaker : manualSpeakerRef.current;
+    const effectiveSpeaker: 'senior' | 'family' = currentManualSpeaker === 'auto' ? result.intent.speaker : currentManualSpeaker;
+    result = {
+      ...result,
+      intent: {
+        ...result.intent,
+        speaker: effectiveSpeaker,
+      },
+    };
 
-    const targetTitle = result.intent.speaker === 'senior' ? `${seniorName} 어르신` : '보호자님';
+    setActiveSpeakerRole(effectiveSpeaker);
+    saveChatLog(effectiveSpeaker, text.trim());
+
+    const targetTitle = effectiveSpeaker === 'senior' ? `${seniorName} 어르신` : '보호자님';
     // LLM 응답 문구가 있으면 그대로 사용, 없으면 로컬 액션 실행 후 기본 문구 생성
     const reply = result.reply || executeIntent(result, targetTitle);
 
     setResponseMsg(reply);
     saveChatLog('agent', reply);
-    setAvatarState('idle');
+    setAvatarState(navigator.onLine ? 'idle' : 'offline');
     speakText(reply);
     if (!usedLLM && settings.apiKey) {
       console.log('로컬 폴백으로 처리됨');
     }
-  }, [seniorName, saveChatLog, speakText, executeIntent]);
+  }, [seniorName, manualSpeaker, saveChatLog, speakText, executeIntent]);
 
   const toggleListening = () => {
     if (isListening) {
@@ -288,6 +365,8 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
 
   const getAvatarVisual = () => {
     switch (avatarState) {
+      case 'offline':
+        return { emoji: '📡', label: '오프라인 (네트워크 연결 확인)', bg: 'linear-gradient(135deg, #64748b 0%, #475569 100%)', color: '#94a3b8' };
       case 'listening':
         return { emoji: '👂🏻', label: `${activeSpeakerRole === 'senior' ? seniorName + ' 어르신' : '보호자'} 말씀 경청 중...`, bg: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', color: '#10b981' };
       case 'thinking':
@@ -303,6 +382,12 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
 
   return (
     <div className="glass-card avatar-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', minHeight: '540px', textAlign: 'center', position: 'relative' }}>
+
+      {isOffline && (
+        <div style={{ width: '100%', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444', color: '#fca5a5', padding: '8px 14px', borderRadius: '14px', fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>
+          ⚠️ 현재 오프라인 상태입니다. 음성 인식 자동 재시작이 일시 중지되었습니다.
+        </div>
+      )}
 
       {/* 1. 상단 상태 및 옵션 */}
       <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -334,19 +419,53 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
       </div>
 
       {/* 2. 발화자 구분 뱃지 */}
-      <div style={{ width: '100%', background: 'rgba(15, 23, 42, 0.6)', padding: '10px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border-light)' }}>
+      <div style={{ width: '100%', background: 'rgba(15, 23, 42, 0.6)', padding: '10px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-sub)' }}>
           <Sparkles size={18} color="#10b981" />
           <span>AI 발화자 구분:</span>
         </div>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '14px',
-          fontSize: '0.88rem', fontWeight: 700,
-          background: activeSpeakerRole === 'senior' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-          color: activeSpeakerRole === 'senior' ? '#f59e0b' : '#34d399',
-          border: activeSpeakerRole === 'senior' ? '1px solid #f59e0b' : '1px solid #10b981'
-        }}>
-          {activeSpeakerRole === 'senior' ? `👴 ${seniorName} 어르신` : '🧑🏻‍💼 보호자 / 자녀'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 14px', borderRadius: '14px',
+            fontSize: '0.88rem', fontWeight: 700,
+            background: activeSpeakerRole === 'senior' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+            color: activeSpeakerRole === 'senior' ? '#f59e0b' : '#34d399',
+            border: activeSpeakerRole === 'senior' ? '1px solid #f59e0b' : '1px solid #10b981'
+          }}>
+            {activeSpeakerRole === 'senior' ? `👴 ${seniorName} 어르신` : '🧑🏻‍💼 보호자 / 자녀'}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const next = manualSpeaker === 'senior' ? 'auto' : 'senior';
+              setManualSpeaker(next);
+              setActiveSpeakerRole('senior');
+            }}
+            style={{
+              padding: '4px 10px', minHeight: 'auto', height: '30px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 600,
+              background: manualSpeaker === 'senior' ? '#f59e0b' : 'rgba(255, 255, 255, 0.08)',
+              color: manualSpeaker === 'senior' ? '#0f172a' : '#cbd5e1',
+              border: manualSpeaker === 'senior' ? '1px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.15)'
+            }}
+          >
+            👴 어르신
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = manualSpeaker === 'family' ? 'auto' : 'family';
+              setManualSpeaker(next);
+              setActiveSpeakerRole('family');
+            }}
+            style={{
+              padding: '4px 10px', minHeight: 'auto', height: '30px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 600,
+              background: manualSpeaker === 'family' ? '#10b981' : 'rgba(255, 255, 255, 0.08)',
+              color: manualSpeaker === 'family' ? '#0f172a' : '#cbd5e1',
+              border: manualSpeaker === 'family' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.15)'
+            }}
+          >
+            🧑💼 보호자
+          </button>
         </div>
       </div>
 
@@ -521,7 +640,7 @@ export default function InteractiveAvatar({ onTriggerSOS }: InteractiveAvatarPro
                 style={{ padding: '12px 16px', borderRadius: '12px', fontSize: '1rem', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
               />
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                * 키는 이 기기(localStorage)에만 저장되며 외부로 전송되지 않습니다. 키가 없으면 기본 내장 응답으로 동작합니다.
+                * 키는 암호화 없이 이 기기의 localStorage에 저장됩니다. 키가 없으면 기본 내장 응답으로 동작합니다.
               </span>
             </div>
 

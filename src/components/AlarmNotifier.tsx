@@ -9,11 +9,11 @@ export default function AlarmNotifier() {
 
   // 1. Web Screen Wake Lock - 화면 꺼짐/탭 전환 후 자동 재획득
   useEffect(() => {
-    let wakeLock: any = null;
+    let wakeLock: WakeLockSentinel | null = null;
     const requestWakeLock = async () => {
       try {
-        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
-          wakeLock = await (navigator as any).wakeLock.request('screen');
+        if ('wakeLock' in navigator && navigator.wakeLock && document.visibilityState === 'visible') {
+          wakeLock = await navigator.wakeLock.request('screen');
         }
       } catch (err) {
         console.log('Wake Lock Request Error:', err);
